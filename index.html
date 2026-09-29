@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAR-DRONE-01 Telemetry & Control Dashboard</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        tactical: {
+                            900: '#0b0f19',
+                            800: '#111827',
+                            700: '#1f2937',
+                            600: '#374151',
+                            500: '#4b5563',
+                        },
+                        hud: {
+                            green: '#10b981',
+                            amber: '#f59e0b',
+                            red: '#ef4444',
+                            blue: '#3b82f6',
+                            cyan: '#06b6d4',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .glow-green { box-shadow: 0 0 15px rgba(16, 185, 129, 0.2); }
+        .glow-red { box-shadow: 0 0 15px rgba(239, 68, 68, 0.3); }
+        .glow-blue { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    </style>
+</head>
+<body class="bg-tactical-900 text-gray-100 min-h-screen flex flex-col antialiased">
+
+    <!-- Header / System Overview Bar -->
+    <header class="bg-tactical-800 border-b border-gray-800 px-4 py-3 sticky top-0 z-50 shadow-lg">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+            
+            <!-- Drone ID & Connection Status -->
+            <div class="flex items-center space-x-4 w-full md:w-auto justify-between md:justify-start">
+                <div class="flex items-center space-x-3">
+                    <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 flex items-center justify-center shadow-md">
+                        <i class="fa-solid fa-drone text-white text-lg"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center space-x-2">
+                            <h1 class="font-bold text-lg tracking-wide text-white">SAR-DRONE-01</h1>
+                            <span id="connectionBadge" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Wi-Fi AP :3333
+                            </span>
+                        </div>
+                        <p class="text-xs text-gray-400">ESP32-S3 Firmware v1.8.4 • Edge Impulse FOMO Enabled</p>
+                    </div>
+                </div>
+
+                <!-- Mobile Arm Status Badge -->
+                <div class="md:hidden">
+                    <span id="mobileArmBadge" class="px-3 py-1 text-xs font-bold rounded-md bg-red-500/20 text-red-400 border border-red-500/40">
+                        DISARMED
+                    </span>
+                </div>
+            </div>
+
+            <!-- Mission State Badge & Armed Indicator -->
+            <div class="flex items-center space-x-3 w-full md:w-auto justify-end">
+                <div class="hidden md:flex flex-col text-right">
+                    <span class="text-xs text-gray-400">MISSION STATE</span>
+                    <span id="missionStateBadge" class="font-mono font-bold text-cyan-400 tracking-wider">WAIT_GPS</span>
+                </div>
+
+                <div id="armIndicatorBox" class="hidden md:flex items-center space-x-2 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 font-bold transition-all duration-300">
+                    <i id="armIcon" class="fa-solid fa-lock text-sm"></i>
+                    <span id="armStatusText">DISARMED</span>
+                </div>
+
+                <button onclick="toggleSimulation()" id="simToggleBtn" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow">
+                    <i class="fa-solid fa-play" id="simIcon"></i> <span id="simText">Simulate Telemetry</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Content Grid -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- ==================== LEFT COLUMN: Attitude & Flight Instruments ==================== -->
+        <div class="space-y-6 flex flex-col">
+            
+            <!-- Flight Attitude / Horizon Card -->
+            <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur relative overflow-hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                        <i class="fa-solid fa-compass text-blue-400"></i> Flight Attitude & Horizon
+                    </h2>
+                    <span class="text-xs font-mono text-gray-400">MPU6050 + IMU</span>
+                </div>
+
+                <!-- Artificial Horizon Canvas / Visualizer -->
+                <div class="relative w-full h-48 bg-gray-900 rounded-xl overflow-hidden border border-gray-700 flex items-center justify-center shadow-inner" id="horizonContainer">
+                    <div id="horizonSkyGround" class="absolute inset-0 transition-transform duration-75 flex flex-col">
+                        <div class="h-1/2 bg-blue-900/60 w-full border-b border-blue-400/50"></div>
+                        <div class="h-1/2 bg-amber-950/60 w-full"></div>
+                    </div>
+                    <!-- Crosshair -->
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div class="w-12 h-0.5 bg-emerald-400"></div>
+                        <div class="h-12 w-0.5 bg-emerald-400 absolute"></div>
+                        <div class="w-24 h-24 border border-emerald-400/40 rounded-full absolute"></div>
+                    </div>
+                    <!-- Overlay text values -->
+                    <div class="absolute bottom-2 left-3 bg-black/60 backdrop-blur px-2 py-1 rounded text-xs font-mono text-gray-300">
+                        R: <span id="valRoll" class="text-emerald-400">0.0</span>° | P: <span id="valPitch" class="text-emerald-400">0.0</span>°
+                    </div>
+                    <div class="absolute bottom-2 right-3 bg-black/60 backdrop-blur px-2 py-1 rounded text-xs font-mono text-gray-300">
+                        YawRate: <span id="valYawRate" class="text-cyan-400">0.0</span>°/s
+                    </div>
+                </div>
+
+                <!-- IMU Raw Data Grid -->
+                <div class="grid grid-cols-3 gap-2 mt-4 text-center font-mono text-xs">
+                    <div class="bg-tactical-700/50 p-2 rounded-lg border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">AX / AY / AZ</span>
+                        <span id="valAccel" class="text-gray-200 font-semibold">0.00G</span>
+                    </div>
+                    <div class="bg-tactical-700/50 p-2 rounded-lg border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">GX / GY / GZ</span>
+                        <span id="valGyro" class="text-gray-200 font-semibold">0.0°/s</span>
+                    </div>
+                    <div class="bg-tactical-700/50 p-2 rounded-lg border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">LOOP DT</span>
+                        <span id="valDt" class="text-emerald-400 font-semibold">10ms</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Altitude, Environment & Barometer Card -->
+            <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                        <i class="fa-solid fa-gauge-high text-cyan-400"></i> Altitude & Environment
+                    </h2>
+                    <span id="bmpStatusBadge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">BMP280 LOCKED</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50">
+                        <span class="text-xs text-gray-400 block">Relative Altitude</span>
+                        <div class="flex items-baseline space-x-1 mt-1">
+                            <span id="valAltitude" class="text-2xl font-bold font-mono text-cyan-400">0.00</span>
+                            <span class="text-sm text-gray-400">m</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 mt-1 block">Ground-ref calibrated</span>
+                    </div>
+
+                    <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50">
+                        <span class="text-xs text-gray-400 block">Vertical Speed</span>
+                        <div class="flex items-baseline space-x-1 mt-1">
+                            <span id="valVspeed" class="text-2xl font-bold font-mono text-emerald-400">0.00</span>
+                            <span class="text-sm text-gray-400">m/s</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500 mt-1 block">Barometric derivative</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mt-3">
+                    <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50 flex justify-between items-center">
+                        <div>
+                            <span class="text-xs text-gray-400 block">Pressure</span>
+                            <span id="valPressure" class="text-sm font-mono font-bold text-gray-200">1013.25</span> <span class="text-xs text-gray-400">Pa</span>
+                        </div>
+                        <i class="fa-solid fa-wind text-gray-500 text-lg"></i>
+                    </div>
+
+                    <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50 flex justify-between items-center">
+                        <div>
+                            <span class="text-xs text-gray-400 block">Temperature</span>
+                            <span id="valTemp" class="text-sm font-mono font-bold text-gray-200">28.5</span> <span class="text-xs text-gray-400">°C</span>
+                        </div>
+                        <i class="fa-solid fa-temperature-three-quarters text-amber-500 text-lg"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Battery Status Card -->
+            <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                        <i class="fa-solid fa-battery-three-quarters text-emerald-400"></i> Power & Battery
+                    </h2>
+                    <span id="batteryStatusText" class="text-xs font-mono text-emerald-400 font-semibold">8.4V/3.7V (100%)</span>
+                </div>
+                
+                <!-- Battery Level Bar -->
+                <div class="w-full bg-gray-900 rounded-full h-4 p-0.5 border border-gray-700 mb-3">
+                    <div id="batteryBar" class="bg-gradient-to-r from-amber-500 to-emerald-500 h-full rounded-full transition-all duration-300" style="width: 100%;"></div>
+                </div>
+
+                <div class="flex justify-between text-xs text-gray-400 font-mono">
+                    <span>Divider Ratio: 4.0x</span>
+                    <span>Min: 10.8V | Crit: 10.2V</span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ==================== CENTER COLUMN: Map & Interactive Controls ==================== -->
+        <div class="space-y-6 flex flex-col lg:col-span-2">
+
+            <!-- Live Radar / Map View Card -->
+            <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                        <i class="fa-solid fa-map-location-dot text-emerald-400"></i> Tactical Radar & GPS Navigation Map
+                    </h2>
+                    <div class="flex items-center space-x-3 text-xs font-mono">
+                        <span id="gpsFixBadge" class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> GPS FIX (8 Sats)
+                        </span>
+                        <span id="mappedAreaBadge" class="text-gray-400">Area: <strong class="text-white">142m²</strong></span>
+                    </div>
+                </div>
+
+                <!-- Simulated Map Canvas Container -->
+                <div class="relative w-full h-72 sm:h-80 bg-gray-950 rounded-xl overflow-hidden border border-gray-800 shadow-inner flex items-center justify-center">
+                    <!-- Grid background lines -->
+                    <div class="absolute inset-0 bg-[radial-gradient(#1f2937_1px,transparent_1px)] [background-size:16px_16px] opacity-40"></div>
+                    
+                    <!-- Radar Canvas -->
+                    <canvas id="radarCanvas" class="absolute inset-0 w-full h-full cursor-crosshair"></canvas>
+
+                    <!-- Map Overlay Controls -->
+                    <div class="absolute top-3 left-3 bg-black/70 backdrop-blur px-3 py-1.5 rounded-lg border border-gray-700/60 text-xs font-mono space-y-0.5 z-10">
+                        <div class="text-cyan-400 font-bold">LAT: <span id="valLat">19.076000</span></div>
+                        <div class="text-cyan-400 font-bold">LON: <span id="valLon">72.877700</span></div>
+                        <div class="text-gray-400 text-[10px]">Home: <span id="valHomeLat">19.0755</span>, <span id="valHomeLon">72.8765</span></div>
+                    </div>
+
+                    <div class="absolute bottom-3 right-3 bg-black/70 backdrop-blur px-3 py-1.5 rounded-lg border border-gray-700/60 text-xs font-mono flex items-center gap-3 z-10">
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block"></span> Drone</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span> Waypoints</span>
+                        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Target</span>
+                    </div>
+                </div>
+
+                <!-- Navigation Status Info Bar -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-center text-xs font-mono">
+                    <div class="bg-tactical-700/40 p-2.5 rounded-xl border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">CURRENT WAYPOINT</span>
+                        <span id="valWaypointIdx" class="text-white font-bold">2 / 16</span>
+                    </div>
+                    <div class="bg-tactical-700/40 p-2.5 rounded-xl border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">POLYGON POINTS</span>
+                        <span id="valPolygonCount" class="text-emerald-400 font-bold">24 pts</span>
+                    </div>
+                    <div class="bg-tactical-700/40 p-2.5 rounded-xl border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">SEARCH GRID</span>
+                        <span id="valGridState" class="text-blue-400 font-bold">ACTIVE (4x4)</span>
+                    </div>
+                    <div class="bg-tactical-700/40 p-2.5 rounded-xl border border-gray-700/50">
+                        <span class="text-gray-400 block text-[10px]">TARGET CONFIRM</span>
+                        <span id="valConfirmState" class="text-amber-400 font-bold">0 / 3 FRAMES</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sensor Matrix Panel (Thermal MLX90640 & OV7670 FOMO AI) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                <!-- MLX90640 Thermal Sensor Card -->
+                <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-3">
+                            <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                                <i class="fa-solid fa-fire text-amber-500"></i> MLX90640 Thermal Sensor
+                            </h2>
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">4 Hz Chess</span>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 mb-4">
+                            <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50">
+                                <span class="text-xs text-gray-400 block">Peak Temperature</span>
+                                <span id="valThermalPeak" class="text-xl font-bold font-mono text-amber-400">26.4 °C</span>
+                            </div>
+                            <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50">
+                                <span class="text-xs text-gray-400 block">Warm Mean</span>
+                                <span id="valThermalMean" class="text-xl font-bold font-mono text-gray-200">24.1 °C</span>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-between items-center text-xs font-mono bg-tactical-700/30 px-3 py-2 rounded-xl border border-gray-700/40">
+                            <span class="text-gray-400">Warm Pixels (≥28°C):</span>
+                            <span id="valWarmPixels" class="text-emerald-400 font-bold">0 / 768</span>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-between pt-3 border-t border-gray-700/50">
+                        <span class="text-xs text-gray-400">Thermal Candidate Flag:</span>
+                        <span id="thermalCandidateBadge" class="px-2.5 py-1 text-xs font-mono font-bold rounded bg-gray-700/50 text-gray-300 border border-gray-600">INACTIVE</span>
+                    </div>
+                </div>
+
+                <!-- OV7670 / Edge Impulse FOMO AI Card -->
+                <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-3">
+                            <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                                <i class="fa-solid fa-eye text-cyan-400"></i> OV7670 / FOMO AI Vision
+                            </h2>
+                            <span id="fomoStatusBadge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">FOMO ACTIVE</span>
+                        </div>
+
+                        <div class="space-y-2 mb-3 text-xs font-mono">
+                            <div class="flex justify-between items-center bg-tactical-700/40 px-3 py-2 rounded-xl border border-gray-700/50">
+                                <span class="text-gray-300">Human / Survivor:</span>
+                                <span id="valFomoPerson" class="text-emerald-400 font-bold">NO (Conf: 0.12)</span>
+                            </div>
+                            <div class="flex justify-between items-center bg-tactical-700/40 px-3 py-2 rounded-xl border border-gray-700/50">
+                                <span class="text-gray-300">Animal / Wildlife:</span>
+                                <span id="valFomoAnimal" class="text-gray-400 font-bold">NO (0.05)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center pt-3 border-t border-gray-700/50 text-xs font-mono text-gray-400">
+                        <span>Inference: <strong id="valFomoLatency" class="text-cyan-400">42ms</strong></span>
+                        <span>Frames: <strong id="valVisibleFrames" class="text-white">1,420</strong></span>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Interactive Mission Control & Command Panel -->
+    <section class="max-w-7xl w-full mx-auto px-4 md:px-6 mb-6">
+        <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl p-5 shadow-xl backdrop-blur">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-sm font-semibold tracking-wider text-gray-300 uppercase flex items-center gap-2">
+                    <i class="fa-solid fa-terminal text-cyan-400"></i> Interactive Mission Control & Command Deck
+                </h2>
+                <span class="text-xs font-mono text-gray-400">Firmware Command Parser Aligned</span>
+            </div>
+
+            <!-- Quick Command Buttons Grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-12 gap-2 mb-4">
+                <button onclick="sendDroneCommand('ARM')" class="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-lock-open"></i> ARM
+                </button>
+                <button onclick="sendDroneCommand('DISARM')" class="px-3 py-2 bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-lock"></i> DISARM
+                </button>
+                <button onclick="sendDroneCommand('TAKEOFF')" class="px-3 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-plane-departure"></i> TAKEOFF
+                </button>
+                <button onclick="sendDroneCommand('SEARCH')" class="px-3 py-2 bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 border border-cyan-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-binoculars"></i> SEARCH
+                </button>
+                <button onclick="sendDroneCommand('RTH')" class="px-3 py-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border border-amber-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-house-chimney"></i> RTH
+                </button>
+                <button onclick="sendDroneCommand('LAND')" class="px-3 py-2 bg-purple-600/20 hover:bg-purple-600/40 text-purple-400 border border-purple-500/40 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-plane-arrival"></i> LAND
+                </button>
+                <button onclick="sendDroneCommand('EMERGENCY')" class="px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow animate-pulse">
+                    <i class="fa-solid fa-triangle-exclamation"></i> EMERGENCY
+                </button>
+                <button onclick="sendDroneCommand('STATUS')" class="px-3 py-2 bg-tactical-700 hover:bg-tactical-600 text-gray-200 border border-gray-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-circle-info"></i> STATUS
+                </button>
+                <button onclick="sendDroneCommand('SEND LOCATION')" class="px-3 py-2 bg-tactical-700 hover:bg-tactical-600 text-gray-200 border border-gray-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-location-arrow"></i> GPS SMS
+                </button>
+                <button onclick="sendDroneCommand('MAKE GRID')" class="px-3 py-2 bg-tactical-700 hover:bg-tactical-600 text-gray-200 border border-gray-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-border-all"></i> GRID
+                </button>
+                <button onclick="sendDroneCommand('RESET MAP')" class="px-3 py-2 bg-tactical-700 hover:bg-tactical-600 text-gray-200 border border-gray-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-rotate-right"></i> RESET
+                </button>
+                <button onclick="sendDroneCommand('CLEAR DETECTIONS')" class="px-3 py-2 bg-tactical-700 hover:bg-tactical-600 text-gray-200 border border-gray-600 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow">
+                    <i class="fa-solid fa-trash"></i> CLEAR
+                </button>
+            </div>
+
+            <!-- Throttle Slider & Custom Terminal Input -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center pt-3 border-t border-gray-700/50">
+                <div class="space-y-1">
+                    <div class="flex justify-between text-xs font-mono">
+                        <span class="text-gray-400">Manual Throttle / Collective</span>
+                        <span id="throttleValText" class="text-cyan-400 font-bold">0%</span>
+                    </div>
+                    <input type="range" min="0" max="100" value="0" id="throttleSlider" oninput="updateThrottle(this.value)" class="w-full h-2 bg-gray-900 rounded-lg appearance-none cursor-pointer accent-cyan-500">
+                </div>
+
+                <div class="md:col-span-2 flex space-x-2">
+                    <div class="relative flex-1">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-cyan-400 font-mono text-xs">></span>
+                        <input type="text" id="terminalInput" placeholder="Type command (e.g. ARM, TAKEOFF, ALTUP, T50) and press Enter..." onkeydown="handleTerminalKey(event)" class="w-full bg-gray-900 border border-gray-700 rounded-xl pl-7 pr-4 py-2.5 text-xs font-mono text-gray-200 focus:outline-none focus:border-cyan-500 shadow-inner">
+                    </div>
+                    <button onclick="submitTerminalInput()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition shadow">
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Bottom Tabbed Section: Evidence Log, Audio Mic & GSM Queue -->
+    <section class="max-w-7xl w-full mx-auto px-4 md:px-6 mb-12">
+        <div class="bg-tactical-800/90 border border-gray-800 rounded-2xl shadow-xl backdrop-blur overflow-hidden">
+            
+            <!-- Tab Headers -->
+            <div class="flex border-b border-gray-800 bg-tactical-800 overflow-x-auto">
+                <button onclick="switchTab('evidence')" id="tabBtn-evidence" class="px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-cyan-500 text-cyan-400 transition flex items-center gap-2">
+                    <i class="fa-solid fa-bullseye"></i> Evidence Log (<span id="evidenceCountBadge">2</span>)
+                </button>
+                <button onclick="switchTab('mic')" id="tabBtn-mic" class="px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition flex items-center gap-2">
+                    <i class="fa-solid fa-microphone"></i> Analog Mic Monitor
+                </button>
+                <button onclick="switchTab('gsm')" id="tabBtn-gsm" class="px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition flex items-center gap-2">
+                    <i class="fa-solid fa-tower-broadcast"></i> GSM / SMS Queue (<span id="smsCountBadge">0</span>)
+                </button>
+                <button onclick="switchTab('terminal')" id="tabBtn-terminal" class="px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition flex items-center gap-2">
+                    <i class="fa-solid fa-terminal"></i> Live Serial Terminal
+                </button>
+            </div>
+
+            <!-- Tab Content: Evidence Log -->
+            <div id="tabContent-evidence" class="p-5">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs font-mono">
+                        <thead class="bg-tactical-700/50 text-gray-400 border-b border-gray-700">
+                            <tr>
+                                <th class="p-3">#</th>
+                                <th class="p-3">Timestamp</th>
+                                <th class="p-3">Coordinates</th>
+                                <th class="p-3">Thermal Peak</th>
+                                <th class="p-3">Altitude</th>
+                                <th class="p-3">Roll / Pitch</th>
+                                <th class="p-3">Google Maps Link</th>
+                            </tr>
+                        </thead>
+                        <tbody id="evidenceTableBody" class="divide-y divide-gray-800 text-gray-300">
+                            <tr class="hover:bg-tactical-700/30 transition">
+                                <td class="p-3 font-bold text-cyan-400">1</td>
+                                <td class="p-3">00:04:12</td>
+                                <td class="p-3">19.076210, 72.877840</td>
+                                <td class="p-3 text-amber-400 font-semibold">36.8 °C</td>
+                                <td class="p-3">10.2 m</td>
+                                <td class="p-3">1.2° / -0.5°</td>
+                                <td class="p-3"><a href="https://maps.google.com/?q=19.076210,72.877840" target="_blank" class="text-blue-400 hover:underline flex items-center gap-1"><i class="fa-solid fa-external-link text-[10px]"></i> Open Map</a></td>
+                            </tr>
+                            <tr class="hover:bg-tactical-700/30 transition">
+                                <td class="p-3 font-bold text-cyan-400">2</td>
+                                <td class="p-3">00:09:45</td>
+                                <td class="p-3">19.078120, 72.879150</td>
+                                <td class="p-3 text-amber-400 font-semibold">34.2 °C</td>
+                                <td class="p-3">9.8 m</td>
+                                <td class="p-3">-0.8° / 1.5°</td>
+                                <td class="p-3"><a href="https://maps.google.com/?q=19.078120,72.879150" target="_blank" class="text-blue-400 hover:underline flex items-center gap-1"><i class="fa-solid fa-external-link text-[10px]"></i> Open Map</a></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab Content:  Analog Mic Monitor -->
+            <div id="tabContent-mic" class="p-5 hidden space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="bg-tactical-700/40 p-4 rounded-xl border border-gray-700/50">
+                        <span class="text-xs text-gray-400 block mb-1 font-mono">BC557 Mic Peak Amplitude</span>
+                        <div class="text-2xl font-bold font-mono text-cyan-400" id="micPeakVal">1,240 <span class="text-xs text-gray-400">/ 4095</span></div>
+                        <div class="w-full bg-gray-900 rounded-full h-2 mt-3 border border-gray-700">
+                            <div id="micPeakBar" class="bg-cyan-500 h-full rounded-full" style="width: 30%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-tactical-700/40 p-4 rounded-xl border border-gray-700/50">
+                        <span class="text-xs text-gray-400 block mb-1 font-mono">BC557 RMS Level</span>
+                        <div class="text-2xl font-bold font-mono text-emerald-400" id="micRmsVal">310 <span class="text-xs text-gray-400">RMS</span></div>
+                        <div class="w-full bg-gray-900 rounded-full h-2 mt-3 border border-gray-700">
+                            <div id="micRmsBar" class="bg-emerald-500 h-full rounded-full" style="width: 25%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-tactical-700/40 p-4 rounded-xl border border-gray-700/50 flex flex-col justify-between">
+                        <span class="text-xs text-gray-400 font-mono">Voice Activity Detector (VAD)</span>
+                        <div class="flex items-center space-x-3 my-2">
+                            <span id="vadStatusIndicator" class="px-3 py-1.5 rounded-lg text-xs font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">QUIET / NOMINAL</span>
+                        </div>
+                        <span class="text-[10px] text-gray-500">Configured on GPIO2 (ADC2)</span>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-400 font-mono bg-tactical-700/20 p-3 rounded-xl border border-gray-700/30">
+                    <i class="fa-solid fa-circle-info text-blue-400 mr-1"></i> Note: The BC557 preamplifier samples analog audio for level monitoring and VAD. Raw audio is never mapped to autonomous flight commands. Spoken commands rely on Wi-Fi text gateway or USB Serial.
+                </p>
+            </div>
+
+            <!-- Tab Content: GSM / SMS Queue -->
+            <div id="tabContent-gsm" class="p-5 hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <div class="text-xs font-mono text-gray-400">SIM800L GSM Module Status: <strong class="text-emerald-400">REGISTERED (+CREG: 1)</strong></div>
+                    <button onclick="queueTestSMS()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition">Queue Test SMS</button>
+                </div>
+                <div class="space-y-2 font-mono text-xs" id="smsQueueContainer">
+                    <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50 flex justify-between items-center">
+                        <div>
+                            <span class="text-amber-400 font-bold block mb-1">[QUEUED -> SENT] To: +917498908607</span>
+                            <p class="text-gray-300">SAR TARGET ALERT: Visible + thermal candidate confirmed at Lat: 19.076, Lon: 72.877</p>
+                        </div>
+                        <span class="text-gray-500 text-[10px]">2 mins ago</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Content: Live Serial Terminal -->
+            <div id="tabContent-terminal" class="p-5 hidden">
+                <div id="terminalLog" class="bg-gray-950 border border-gray-800 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs space-y-1 text-emerald-400 shadow-inner">
+                    <div>[00:00:01] SAR-DRONE Firmware v1.8.4 initialized successfully.</div>
+                    <div>[00:00:01] MPU6050 gyroscope calibration complete.</div>
+                    <div>[00:00:02] BMP280 ground reference locked: 101325 Pa (0.00 m).</div>
+                    <div>[00:00:02] MLX90640 thermal sensor active (4 Hz).</div>
+                    <div>[00:00:03] OV7670 camera initialized. Edge Impulse FOMO model loaded.</div>
+                    <div>[00:00:03] Wi-Fi AP ready: SAR-Drone-Commands (:3333).</div>
+                    <div>[00:00:04] SIM800L module registered. WAITING FOR GPS FIX...</div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Dashboard Controller Script -->
+    <script>
+        // Dashboard State
+        let state = {
+            armed: false,
+            missionState: 'WAIT_GPS',
+            roll: 0.0,
+            pitch: 0.0,
+            yawRate: 0.0,
+            altitude: 0.0,
+            vspeed: 0.0,
+            pressure: 101325.0,
+            temp: 28.5,
+            batteryV: 12.54,
+            batteryPercent: 92,
+            satellites: 8,
+            lat: 19.076000,
+            lon: 72.877700,
+            homeLat: 19.075500,
+            homeLon: 72.876500,
+            throttle: 0,
+            thermalPeak: 26.4,
+            thermalMean: 24.1,
+            warmPixels: 0,
+            fomoConf: 0.12,
+            simulating: true
+        };
+
+        // Simulated Waypoints & Polygon
+        const waypoints = [
+            {lat: 19.0750, lon: 72.8760},
+            {lat: 19.0770, lon: 72.8760},
+            {lat: 19.0770, lon: 72.8790},
+            {lat: 19.0750, lon: 72.8790}
+        ];
+
+        let smsQueueList = [];
+        let terminalLogs = [];
+
+        // Toggle Simulation
+        let simInterval = null;
+        function toggleSimulation() {
+            state.simulating = !state.simulating;
+            const btn = document.getElementById('simToggleBtn');
+            const icon = document.getElementById('simIcon');
+            const text = document.getElementById('simText');
+            if(state.simulating) {
+                btn.className = "px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow";
+                icon.className = "fa-solid fa-pause";
+                text.innerText = "Pause Simulation";
+                startSimulationLoop();
+            } else {
+                btn.className = "px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1.5 shadow";
+                icon.className = "fa-solid fa-play";
+                text.innerText = "Resume Simulation";
+                clearInterval(simInterval);
+            }
+        }
+
+        // Send Drone Command
+        function sendDroneCommand(cmd) {
+            logTerminal(`> CMD: ${cmd}`);
+            if(cmd === 'ARM') {
+                state.armed = true;
+                state.missionState = 'ARMED_STATE';
+                logTerminal(`[ESP32] ARMED successfully. PID loops reset.`);
+            } else if(cmd === 'DISARM') {
+                state.armed = false;
+                state.throttle = 0;
+                document.getElementById('throttleSlider').value = 0;
+                document.getElementById('throttleValText').innerText = '0%';
+                state.missionState = 'WAIT_GPS';
+                logTerminal(`[ESP32] DISARMED. Motors stopped.`);
+            } else if(cmd === 'TAKEOFF') {
+                if(state.armed) {
+                    state.missionState = 'TAKEOFF_STATE';
+                    logTerminal(`[ESP32] TAKEOFF command accepted. Climbing to 10.0m...`);
+                } else {
+                    logTerminal(`[ESP32] TAKEOFF REJECTED - Drone not armed!`);
+                }
+            } else if(cmd === 'SEARCH') {
+                if(state.armed) {
+                    state.missionState = 'SEARCH_STATE';
+                    logTerminal(`[ESP32] SEARCH initiated. Navigating search grid waypoints...`);
+                } else {
+                    logTerminal(`[ESP32] SEARCH REJECTED - Drone not armed!`);
+                }
+            } else if(cmd === 'RTH') {
+                state.missionState = 'RTH_STATE';
+                logTerminal(`[ESP32] RETURN_HOME initiated. Flying to home coordinates.`);
+            } else if(cmd === 'LAND') {
+                state.missionState = 'LAND_STATE';
+                logTerminal(`[ESP32] LANDING sequence started. Descending at 0.25 m/s.`);
+            } else if(cmd === 'EMERGENCY') {
+                state.armed = false;
+                state.missionState = 'EMERGENCY_STATE';
+                logTerminal(`[ESP32] EMERGENCY MODE INVOKED - MOTORS STOPPED / RESCUE SMS QUEUED.`);
+            } else if(cmd === 'STATUS') {
+                logTerminal(`[ESP32] STATUS M=${state.missionState} ARM=${state.armed?'YES':'NO'} BAT=${state.batteryV}V ALT=${state.altitude}m`);
+            } else if(cmd === 'SEND LOCATION') {
+                queueTestSMS();
+                logTerminal(`[ESP32] Location SMS queued for +917498908607`);
+            } else if(cmd === 'MAKE GRID') {
+                logTerminal(`[ESP32] Default search grid generated (4x4 waypoints).`);
+            } else if(cmd === 'RESET MAP') {
+                logTerminal(`[ESP32] Polygon mapping cleared.`);
+            } else if(cmd === 'CLEAR DETECTIONS') {
+                logTerminal(`[ESP32] Evidence detections log cleared.`);
+            }
+            updateDashboardUI();
+        }
+
+        function updateThrottle(val) {
+            state.throttle = val;
+            document.getElementById('throttleValText').innerText = val + '%';
+            if(state.armed && val > 0) {
+                logTerminal(`[ESP32] Throttle set to ${val}%`);
+            }
+        }
+
+        function handleTerminalKey(e) {
+            if(e.key === 'Enter') {
+                submitTerminalInput();
+            }
+        }
+
+        function submitTerminalInput() {
+            const input = document.getElementById('terminalInput');
+            const val = input.value.trim();
+            if(val) {
+                sendDroneCommand(val.toUpperCase());
+                input.value = '';
+            }
+        }
+
+        function logTerminal(msg) {
+            const term = document.getElementById('terminalLog');
+            const timeStr = new Date().toTimeString().split(' ')[0];
+            const div = document.createElement('div');
+            div.textContent = `[${timeStr}] ${msg}`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        // Tab Switcher
+        function switchTab(tabName) {
+            ['evidence', 'mic', 'gsm', 'terminal'].forEach(t => {
+                document.getElementById(`tabContent-${t}`).classList.add('hidden');
+                document.getElementById(`tabBtn-${t}`).className = "px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-transparent text-gray-400 hover:text-gray-200 transition flex items-center gap-2";
+            });
+            document.getElementById(`tabContent-${tabName}`).classList.remove('hidden');
+            document.getElementById(`tabBtn-${tabName}`).className = "px-6 py-3 text-xs font-bold tracking-wider uppercase border-b-2 border-cyan-500 text-cyan-400 transition flex items-center gap-2";
+        }
+
+        function queueTestSMS() {
+            smsQueueList.unshift({
+                to: '+917498908607',
+                msg: `SAR TARGET ALERT: Lat: ${state.lat.toFixed(6)}, Lon: ${state.lon.toFixed(6)} | Alt: ${state.altitude.toFixed(1)}m | Battery: ${state.batteryPercent}%`,
+                time: 'Just now'
+            });
+            document.getElementById('smsCountBadge').innerText = smsQueueList.length;
+            renderSMSQueue();
+        }
+
+        function renderSMSQueue() {
+            const container = document.getElementById('smsQueueContainer');
+            container.innerHTML = smsQueueList.map(s => `
+                <div class="bg-tactical-700/40 p-3 rounded-xl border border-gray-700/50 flex justify-between items-center">
+                    <div>
+                        <span class="text-emerald-400 font-bold block mb-1">[QUEUED -> SENT] To: ${s.to}</span>
+                        <p class="text-gray-300">${s.msg}</p>
+                    </div>
+                    <span class="text-gray-500 text-[10px]">${s.time}</span>
+                </div>
+            `).join('');
+        }
+
+        // Radar Canvas Renderer
+        function drawRadar() {
+            const canvas = document.getElementById('radarCanvas');
+            if(!canvas) return;
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+
+            // Draw concentric distance rings
+            ctx.strokeStyle = 'rgba(55, 65, 81, 0.5)';
+            ctx.lineWidth = 1;
+            [40, 80, 120, 160].forEach(r => {
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.stroke();
+            });
+
+            // Draw crosshairs
+            ctx.beginPath();
+            ctx.moveTo(0, cy); ctx.lineTo(canvas.width, cy);
+            ctx.moveTo(cx, 0); ctx.lineTo(cx, canvas.height);
+            ctx.strokeStyle = 'rgba(55, 65, 81, 0.3)';
+            ctx.stroke();
+
+            // Draw Home location
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(cx - 20, cy + 15, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#93c5fd';
+            ctx.font = '10px JetBrains Mono';
+            ctx.fillText('HOME', cx - 35, cy + 32);
+
+            // Draw Waypoints
+            ctx.strokeStyle = '#10b981';
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(cx - 50, cy - 60);
+            ctx.lineTo(cx + 60, cy - 60);
+            ctx.lineTo(cx + 60, cy + 50);
+            ctx.lineTo(cx - 50, cy + 50);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw Waypoint Points
+            [{x: cx - 50, y: cy - 60}, {x: cx + 60, y: cy - 60}, {x: cx + 60, y: cy + 50}, {x: cx - 50, y: cy + 50}].forEach((wp, idx) => {
+                ctx.fillStyle = '#10b981';
+                ctx.beginPath();
+                ctx.arc(wp.x, wp.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Draw Target Detection Pin
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(cx + 30, cy - 20, 7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#fca5a5';
+            ctx.fillText('TARGET #1', cx + 15, cy - 30);
+
+            // Draw Drone Position (Center or moving slightly based on roll/pitch)
+            const droneX = cx + (state.roll * 1.5);
+            const droneY = cy - (state.pitch * 1.5);
+            ctx.fillStyle = '#06b6d4';
+            ctx.beginPath();
+            ctx.arc(droneX, droneY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Drone heading indicator pointer
+            ctx.beginPath();
+            ctx.moveTo(droneX, droneY - 14);
+            ctx.lineTo(droneX - 5, droneY - 6);
+            ctx.lineTo(droneX + 5, droneY - 6);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+        }
+
+        // Update Dashboard UI Elements
+        function updateDashboardUI() {
+            // Arm / Disarm UI
+            const armBox = document.getElementById('armIndicatorBox');
+            const armText = document.getElementById('armStatusText');
+            const armIcon = document.getElementById('armIcon');
+            const mobileArmBadge = document.getElementById('mobileArmBadge');
+
+            if(state.armed) {
+                armBox.className = "hidden md:flex items-center space-x-2 px-4 py-2 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold glow-green transition-all duration-300";
+                armText.innerText = "ARMED";
+                armIcon.className = "fa-solid fa-lock-open text-sm";
+                mobileArmBadge.className = "px-3 py-1 text-xs font-bold rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/40";
+                mobileArmBadge.innerText = "ARMED";
+            } else {
+                armBox.className = "hidden md:flex items-center space-x-2 px-4 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 font-bold transition-all duration-300";
+                armText.innerText = "DISARMED";
+                armIcon.className = "fa-solid fa-lock text-sm";
+                mobileArmBadge.className = "px-3 py-1 text-xs font-bold rounded-md bg-red-500/20 text-red-400 border border-red-500/40";
+                mobileArmBadge.innerText = "DISARMED";
+            }
+
+            // Mission State Badge
+            document.getElementById('missionStateBadge').innerText = state.missionState;
+
+            // Roll / Pitch Horizon Visualizer
+            document.getElementById('valRoll').innerText = state.roll.toFixed(1);
+            document.getElementById('valPitch').innerText = state.pitch.toFixed(1);
+            document.getElementById('valYawRate').innerText = state.yawRate.toFixed(1);
+            
+            const horizon = document.getElementById('horizonSkyGround');
+            horizon.style.transform = `rotate(${state.roll}deg) translateY(${state.pitch * 2}px)`;
+
+            // Altitude & Environment
+            document.getElementById('valAltitude').innerText = state.altitude.toFixed(2);
+            document.getElementById('valVspeed').innerText = state.vspeed.toFixed(2);
+            document.getElementById('valPressure').innerText = state.pressure.toFixed(1);
+            document.getElementById('valTemp').innerText = state.temp.toFixed(1);
+
+            // Battery
+            document.getElementById('batteryStatusText').innerText = `${state.batteryV.toFixed(2)}V (${state.batteryPercent}%)`;
+            document.getElementById('batteryBar').style.width = state.batteryPercent + '%';
+
+            // GPS & Lat/Lon
+            document.getElementById('valLat').innerText = state.lat.toFixed(6);
+            document.getElementById('valLon').innerText = state.lon.toFixed(6);
+
+            // Thermal MLX90640
+            document.getElementById('valThermalPeak').innerText = state.thermalPeak.toFixed(1) + ' °C';
+            document.getElementById('valThermalMean').innerText = state.thermalMean.toFixed(1) + ' °C';
+            document.getElementById('valWarmPixels').innerText = state.warmPixels + ' / 768';
+
+            const thermBadge = document.getElementById('thermalCandidateBadge');
+            if(state.thermalPeak >= 30.0) {
+                thermBadge.className = "px-2.5 py-1 text-xs font-mono font-bold rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse";
+                thermBadge.innerText = "CANDIDATE CONFIRMED";
+            } else {
+                thermBadge.className = "px-2.5 py-1 text-xs font-mono font-bold rounded bg-gray-700/50 text-gray-300 border border-gray-600";
+                thermBadge.innerText = "INACTIVE";
+            }
+
+            // FOMO AI Vision
+            const fomoPerson = document.getElementById('valFomoPerson');
+            if(state.fomoConf >= 0.65) {
+                fomoPerson.className = "text-emerald-400 font-bold";
+                fomoPerson.innerText = `YES (Conf: ${state.fomoConf.toFixed(2)})`;
+            } else {
+                fomoPerson.className = "text-gray-400 font-bold";
+                fomoPerson.innerText = `NO (${state.fomoConf.toFixed(2)})`;
+            }
+
+            // BC557 Mic simulated values
+            const micPeak = Math.floor(800 + Math.random() * 400);
+            const micRms = Math.floor(200 + Math.random() * 150);
+            document.getElementById('micPeakVal').innerHTML = `${micPeak} <span class="text-xs text-gray-400">/ 4095</span>`;
+            document.getElementById('micPeakBar').style.width = (micPeak / 40.95) + '%';
+            document.getElementById('micRmsVal').innerHTML = `${micRms} <span class="text-xs text-gray-400">RMS</span>`;
+            document.getElementById('micRmsBar').style.width = (micRms / 20.95) + '%';
+
+            drawRadar();
+        }
+
+        // Simulation Loop
+        function startSimulationLoop() {
+            simInterval = setInterval(() => {
+                if(!state.simulating) return;
+
+                // Simulate slight jitter in IMU & GPS during flight or search
+                state.roll += (Math.random() - 0.5) * 0.8;
+                state.pitch += (Math.random() - 0.5) * 0.8;
+                state.roll = Math.max(-15, Math.min(15, state.roll));
+                state.pitch = Math.max(-15, Math.min(15, state.pitch));
+                state.yawRate = (Math.random() - 0.5) * 2.0;
+
+                if(state.missionState === 'TAKEOFF_STATE') {
+                    state.altitude += 0.2;
+                    state.vspeed = 0.25;
+                    if(state.altitude >= 10.0) state.missionState = 'SEARCH_STATE';
+                } else if(state.missionState === 'SEARCH_STATE') {
+                    state.lat += 0.00001 * (Math.random() - 0.4);
+                    state.lon += 0.00001 * (Math.random() - 0.4);
+                    state.thermalPeak = 25.0 + Math.random() * 12.0;
+                    state.warmPixels = Math.floor(Math.random() * 25);
+                    state.fomoConf = 0.1 + Math.random() * 0.75;
+                } else if(state.missionState === 'LAND_STATE') {
+                    state.altitude = Math.max(0.0, state.altitude - 0.25);
+                    state.vspeed = -0.25;
+                    if(state.altitude <= 0.35) {
+                        state.armed = false;
+                        state.missionState = 'WAIT_GPS';
+                        logTerminal(`[ESP32] Landed safely and disarmed.`);
+                    }
+                }
+
+                updateDashboardUI();
+            }, 500);
+        }
+
+        // Initial setup on window load
+        window.onload = function() {
+            updateDashboardUI();
+            startSimulationLoop();
+            window.addEventListener('resize', drawRadar);
+        };
+    </script>
+</body>
+</html>
