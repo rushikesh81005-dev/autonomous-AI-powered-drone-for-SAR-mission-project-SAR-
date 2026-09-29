@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAR Drone Telemetry & Control Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        tactical: {
+                            900: '#030712',
+                            800: '#0f172a',
+                            700: '#1e293b',
+                            600: '#334155',
+                            500: '#64748b',
+                            accent: '#06b6d4',
+                            amber: '#f59e0b',
+                            rose: '#f43f5e',
+                            emerald: '#10b981'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@300;400;500;600;700&display=swap');
+        .font-mono-tech { font-family: 'Share Tech Mono', monospace; }
+        body { font-family: 'Inter', sans-serif; }
+        .glow-cyan { box-shadow: 0 0 15px rgba(6, 182, 212, 0.25); }
+        .glow-rose { box-shadow: 0 0 15px rgba(244, 63, 94, 0.3); }
+        .glow-amber { box-shadow: 0 0 15px rgba(245, 158, 11, 0.3); }
+        .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(51, 65, 85, 0.6); }
+        /* Custom scrollbar for tactical feel */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #030712; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+    </style>
+</head>
+<body class="bg-tactical-900 text-slate-100 min-h-screen flex flex-col overflow-x-hidden selection:bg-cyan-500 selection:text-black">
+
+    <!-- Top Navigation / Mission Header -->
+    <header class="glass-panel border-b border-slate-800 px-4 py-3 sticky top-0 z-50 flex flex-wrap justify-between items-center gap-4">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-lg bg-cyan-500/10 border border-cyan-500/40 flex items-center justify-center glow-cyan">
+                <i class="fa-solid fa-satellite-dish text-cyan-400 text-xl animate-pulse"></i>
+            </div>
+            <div>
+                <h1 class="font-mono-tech text-lg font-bold tracking-wider text-cyan-400 flex items-center gap-2">
+                    SAR-X GCS <span class="text-xs px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">v3.4.2</span>
+                </h1>
+                <p class="text-xs text-slate-400">Search & Rescue Autonomous Operations Deck (2S LiPo Config)</p>
+            </div>
+        </div>
+
+        <!-- Mission Status Pills -->
+        <div class="flex items-center flex-wrap gap-3">
+            <div class="flex items-center space-x-2 bg-slate-900/80 border border-slate-700/60 px-3 py-1.5 rounded-lg">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" id="connection-dot"></span>
+                <span class="font-mono-tech text-xs tracking-wider text-emerald-400" id="connection-status">LINK: STABLE (98%)</span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-900/80 border border-slate-700/60 px-3 py-1.5 rounded-lg">
+                <i class="fa-solid fa-location-crosshairs text-cyan-400 text-xs"></i>
+                <span class="font-mono-tech text-xs text-slate-300" id="gps-lock-status">GPS: 3D FIX (14 Sats)</span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-900/80 border border-slate-700/60 px-3 py-1.5 rounded-lg">
+                <i class="fa-solid fa-clock text-amber-400 text-xs"></i>
+                <span class="font-mono-tech text-xs text-amber-300" id="mission-timer">T+ 00:00:00</span>
+            </div>
+        </div>
+
+        <!-- Master Flight Actions -->
+        <div class="flex items-center space-x-2">
+            <button onclick="triggerEmergencyReturn()" class="px-3.5 py-1.5 rounded-lg bg-rose-600/20 border border-rose-500/60 hover:bg-rose-600/40 text-rose-300 font-mono-tech text-xs font-semibold tracking-wider transition-all flex items-center gap-1.5 glow-rose">
+                <i class="fa-solid fa-house-chimney-crack"></i> RTH (FAILSAFE)
+            </button>
+            <button onclick="toggleFlightMode()" id="arm-btn" class="px-4 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/40 text-emerald-300 font-mono-tech text-xs font-semibold tracking-wider transition-all flex items-center gap-1.5">
+                <i class="fa-solid fa-power-off"></i> <span id="arm-btn-text">DISARMED</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 max-w-[1920px] mx-auto w-full">
+
+        <!-- Left Column: HUD & Attitude / Telemetry Gauges (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col space-y-4">
+            
+            <!-- Artificial Horizon / Attitude Indicator -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col relative overflow-hidden">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-compass text-cyan-400"></i> FLIGHT ATTITUDE & HORIZON
+                    </h2>
+                    <span class="text-xs font-mono-tech text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/50">AHRS ACTIVE</span>
+                </div>
+
+                <!-- Horizon Canvas Wrapper -->
+                <div class="relative w-full h-56 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center overflow-hidden shadow-inner">
+                    <canvas id="horizonCanvas" class="w-full h-full"></canvas>
+                    <!-- HUD overlay crosshairs -->
+                    <div class="absolute inset-0 pointer-events-none flex items-center justify-center">
+                        <div class="w-8 h-8 border border-cyan-400/50 rounded-full flex items-center justify-center">
+                            <div class="w-2 h-0.5 bg-cyan-400"></div>
+                            <div class="absolute h-2 w-0.5 bg-cyan-400"></div>
+                        </div>
+                    </div>
+                    <!-- Flight telemetry overlay text -->
+                    <div class="absolute bottom-2 left-2 font-mono-tech text-[11px] text-cyan-300 bg-slate-900/80 px-2 py-1 rounded border border-slate-700">
+                        P: <span id="pitch-val">-1.2</span>° | R: <span id="roll-val">+0.4</span>° | Y: <span id="yaw-val">142</span>°
+                    </div>
+                    <div class="absolute bottom-2 right-2 font-mono-tech text-[11px] text-emerald-300 bg-slate-900/80 px-2 py-1 rounded border border-slate-700">
+                        ALT: <span id="alt-val">48.2</span>m
+                    </div>
+                </div>
+
+                <!-- Core Flight Metrics Grid -->
+                <div class="grid grid-cols-3 gap-2 mt-3">
+                    <div class="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg text-center">
+                        <div class="text-[10px] font-mono-tech text-slate-400 uppercase">Ground Speed</div>
+                        <div class="text-lg font-mono-tech font-bold text-cyan-400 mt-0.5"><span id="gs-val">12.4</span> <span class="text-xs font-normal text-slate-400">m/s</span></div>
+                    </div>
+                    <div class="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg text-center">
+                        <div class="text-[10px] font-mono-tech text-slate-400 uppercase">Climb Rate</div>
+                        <div class="text-lg font-mono-tech font-bold text-emerald-400 mt-0.5"><span id="climb-val">+0.8</span> <span class="text-xs font-normal text-slate-400">m/s</span></div>
+                    </div>
+                    <div class="bg-slate-900/90 border border-slate-800 p-2.5 rounded-lg text-center">
+                        <div class="text-[10px] font-mono-tech text-slate-400 uppercase">Wind Est.</div>
+                        <div class="text-lg font-mono-tech font-bold text-amber-400 mt-0.5"><span id="wind-val">4.2</span> <span class="text-xs font-normal text-slate-400">m/s</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Battery & Power Management (Updated to 2S LiPo: 8.4V max, 7.4V nominal, 7.2V low, 6.8V critical) -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-battery-half text-emerald-400" id="batt-icon"></i> 2S LIPO POWER SYSTEM
+                    </h2>
+                    <span class="text-xs font-mono-tech text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/50" id="batt-status-badge">HEALTHY</span>
+                </div>
+
+                <div class="bg-slate-950 rounded-lg p-3 border border-slate-800 mb-3 flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-mono-tech text-slate-400">PACK VOLTAGE</div>
+                        <div class="text-2xl font-mono-tech font-bold text-slate-100 mt-0.5"><span id="batt-voltage">8.12</span> <span class="text-sm font-normal text-emerald-400">V</span></div>
+                        <div class="text-[10px] font-mono-tech text-slate-500 mt-0.5">Cell Delta: 0.012V (Cell 1: 4.06V | Cell 2: 4.06V)</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs font-mono-tech text-slate-400">REMAINING</div>
+                        <div class="text-2xl font-mono-tech font-bold text-cyan-400 mt-0.5"><span id="batt-percent">88</span><span class="text-sm">%</span></div>
+                        <div class="text-[10px] font-mono-tech text-slate-500 mt-0.5">Est. Time: <span id="batt-time">14m 20s</span></div>
+                    </div>
+                </div>
+
+                <!-- Battery Visual Progress Bar -->
+                <div class="w-full bg-slate-900 rounded-full h-3.5 p-0.5 border border-slate-800 mb-3 relative overflow-hidden">
+                    <div id="batt-bar" class="bg-gradient-to-r from-emerald-500 to-cyan-400 h-full rounded-full transition-all duration-500" style="width: 88%;"></div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 text-xs font-mono-tech text-slate-400">
+                    <div class="bg-slate-900/60 p-2 rounded border border-slate-800/60 flex justify-between">
+                        <span>Current Draw:</span>
+                        <span class="text-slate-200 font-bold"><span id="batt-current">12.4</span> A</span>
+                    </div>
+                    <div class="bg-slate-900/60 p-2 rounded border border-slate-800/60 flex justify-between">
+                        <span>Power Used:</span>
+                        <span class="text-slate-200 font-bold"><span id="batt-mah">1420</span> mAh</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Environmental & Thermal Sensors -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-temperature-half text-amber-400"></i> SYSTEM THERMALS & SENSORS
+                    </h2>
+                    <span class="text-xs font-mono-tech text-slate-400">BARO: 1013.2 hPa</span>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                        <div class="text-[10px] font-mono-tech text-slate-400">ESC / MOTORS TEMP</div>
+                        <div class="text-base font-mono-tech font-bold text-amber-400 mt-0.5"><span id="esc-temp">42.5</span> °C</div>
+                    </div>
+                    <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+                        <div class="text-[10px] font-mono-tech text-slate-400">FLIGHT CONTROLLER</div>
+                        <div class="text-base font-mono-tech font-bold text-cyan-400 mt-0.5"><span id="fc-temp">38.1</span> °C</div>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Center Column: Map & Live Video Feed (5 cols) -->
+        <section class="lg:col-span-5 flex flex-col space-y-4">
+            
+            <!-- Simulated Tactical Map & Mission Waypoints -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col flex-1 min-h-[380px] relative overflow-hidden">
+                <div class="flex justify-between items-center mb-3 z-10">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-map-location-dot text-cyan-400"></i> TACTICAL MAP & SEARCH GRID
+                    </h2>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="setMapLayer('sat')" id="map-sat-btn" class="px-2 py-0.5 rounded text-[10px] font-mono-tech bg-cyan-950 text-cyan-300 border border-cyan-800">SAR SATELLITE</button>
+                        <button onclick="setMapLayer('heat')" id="map-heat-btn" class="px-2 py-0.5 rounded text-[10px] font-mono-tech bg-slate-900 text-slate-400 border border-slate-700">THERMAL GRID</button>
+                    </div>
+                </div>
+
+                <!-- Simulated Interactive Canvas Map -->
+                <div class="relative flex-1 w-full bg-slate-950 rounded-lg border border-slate-800 overflow-hidden min-h-[320px] flex items-center justify-center">
+                    <canvas id="tacticalMap" class="absolute inset-0 w-full h-full cursor-crosshair"></canvas>
+                    
+                    <!-- Map Overlays -->
+                    <div class="absolute top-3 left-3 bg-slate-950/80 border border-slate-800 px-2.5 py-1.5 rounded text-[11px] font-mono-tech backdrop-blur text-slate-300 pointer-events-none">
+                        <div>LAT: <span id="drone-lat">34.2145</span>° N</div>
+                        <div>LON: <span id="drone-lon">-118.4128</span>° W</div>
+                    </div>
+
+                    <div class="absolute bottom-3 right-3 bg-slate-950/80 border border-slate-800 px-2.5 py-1.5 rounded text-[11px] font-mono-tech backdrop-blur text-emerald-400 flex items-center gap-2">
+                        <i class="fa-solid fa-crosshairs animate-spin text-xs"></i> SEARCH PATTERN: LAWN-MOWER 68%
+                    </div>
+
+                    <!-- Waypoint Quick Controls overlay -->
+                    <div class="absolute bottom-3 left-3 flex gap-1.5 z-10">
+                        <button onclick="addSearchWaypoint()" class="px-2.5 py-1 rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/60 text-cyan-200 font-mono-tech text-[10px] transition-all">
+                            <i class="fa-solid fa-plus"></i> ADD WAYPOINT
+                        </button>
+                        <button onclick="clearWaypoints()" class="px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 font-mono-tech text-[10px] transition-all">
+                            CLEAR
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Optical / Thermal Payload Feed & Gimbal Control -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-camera text-cyan-400"></i> SEARCH & RESCUE PAYLOAD FEED
+                    </h2>
+                    <div class="flex items-center space-x-2">
+                        <span class="inline-block w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+                        <span class="text-xs font-mono-tech text-rose-400">LIVE REC [4K 60FPS]</span>
+                    </div>
+                </div>
+
+                <!-- Simulated Camera Viewport -->
+                <div class="relative w-full h-44 bg-slate-950 rounded-lg border border-slate-800 overflow-hidden flex items-center justify-center">
+                    <div class="absolute inset-0 bg-gradient-to-tr from-cyan-950/30 via-slate-900/60 to-slate-950 flex items-center justify-center">
+                        <!-- Target Detection Box Simulation -->
+                        <div id="target-box" class="absolute border-2 border-rose-500/80 rounded w-24 h-24 flex flex-col justify-between p-1 transition-all duration-300 animate-pulse" style="top: 35%; left: 52%;">
+                            <span class="bg-rose-600 text-white text-[9px] font-mono-tech px-1 rounded self-start">HEAT SIGNATURE 98%</span>
+                            <span class="bg-rose-600 text-white text-[9px] font-mono-tech px-1 rounded self-end">POS: +12m</span>
+                        </div>
+                        <!-- Crosshair and HUD lines -->
+                        <div class="absolute inset-0 border border-cyan-500/10 pointer-events-none flex items-center justify-center">
+                            <div class="w-full h-px bg-cyan-500/20"></div>
+                            <div class="absolute h-full w-px bg-cyan-500/20"></div>
+                        </div>
+                    </div>
+                    <div class="absolute top-2 left-2 text-[10px] font-mono-tech text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded border border-slate-700">
+                        MODE: <span id="cam-mode" class="text-cyan-400 font-bold">THERMAL (FLIR)</span> | ZOOM: <span id="cam-zoom">4.0X</span>
+                    </div>
+                </div>
+
+                <!-- Gimbal & Payload Quick Control Bar -->
+                <div class="grid grid-cols-4 gap-2 mt-3">
+                    <button onclick="setCameraMode('thermal')" id="cam-mode-thermal" class="py-1.5 px-2 rounded bg-cyan-950 border border-cyan-700/60 text-cyan-300 font-mono-tech text-xs transition-all">THERMAL</button>
+                    <button onclick="setCameraMode('optical')" id="cam-mode-optical" class="py-1.5 px-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all">OPTICAL</button>
+                    <button onclick="adjustZoom(1)" class="py-1.5 px-2 rounded bg-slate-900 border border-slate-700 text-slate-300 font-mono-tech text-xs hover:bg-slate-800 transition-all"><i class="fa-solid fa-magnifying-glass-plus"></i> ZOOM +</button>
+                    <button onclick="dropPayloadBeacon()" class="py-1.5 px-2 rounded bg-amber-600/20 hover:bg-amber-600/40 border border-amber-500/60 text-amber-300 font-mono-tech text-xs transition-all flex items-center justify-center gap-1">
+                        <i class="fa-solid fa-location-dot"></i> DROP BEACON
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Right Column: Telemetry Charts & Serial Console (3 cols) -->
+        <section class="lg:col-span-3 flex flex-col space-y-4">
+            
+            <!-- Live Telemetry Chart -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-chart-line text-cyan-400"></i> ALTITUDE & POWER TELEMETRY
+                    </h2>
+                    <span class="text-[10px] font-mono-tech text-slate-400">20Hz STREAM</span>
+                </div>
+                <div class="w-full h-40 bg-slate-950 rounded-lg p-2 border border-slate-800 relative">
+                    <canvas id="telemetryChart" class="w-full h-full"></canvas>
+                </div>
+            </div>
+
+            <!-- Command Deck & Autopilot Modes -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-terminal text-cyan-400"></i> FLIGHT MODE & COMMANDS
+                    </h2>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <button onclick="setFlightMode('AUTO')" id="mode-auto" class="p-2 rounded bg-cyan-950 border border-cyan-500/60 text-cyan-300 font-mono-tech text-xs font-bold transition-all">AUTO MISSION</button>
+                    <button onclick="setFlightMode('LOITER')" id="mode-loiter" class="p-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all">LOITER (HOLD)</button>
+                    <button onclick="setFlightMode('GUIDED')" id="mode-guided" class="p-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all">GUIDED VECTOR</button>
+                    <button onclick="setFlightMode('LAND')" id="mode-land" class="p-2 rounded bg-amber-950/60 border border-amber-600/60 text-amber-300 font-mono-tech text-xs transition-all">EMERGENCY LAND</button>
+                </div>
+
+                <!-- Altitude / Speed Sliders -->
+                <div class="space-y-3 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <div>
+                        <div class="flex justify-between text-xs font-mono-tech text-slate-400 mb-1">
+                            <span>TARGET ALTITUDE</span>
+                            <span class="text-cyan-400" id="target-alt-label">50 m</span>
+                        </div>
+                        <input type="range" min="10" max="150" value="50" oninput="updateTargetAlt(this.value)" class="w-full accent-cyan-500 bg-slate-800 rounded-lg h-1.5 cursor-pointer">
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-xs font-mono-tech text-slate-400 mb-1">
+                            <span>CRUISE SPEED</span>
+                            <span class="text-cyan-400" id="target-speed-label">14 m/s</span>
+                        </div>
+                        <input type="range" min="5" max="25" value="14" oninput="updateTargetSpeed(this.value)" class="w-full accent-cyan-500 bg-slate-800 rounded-lg h-1.5 cursor-pointer">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Serial Terminal / Mavlink Log -->
+            <div class="glass-panel rounded-xl p-4 flex flex-col flex-1 min-h-[220px]">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="font-mono-tech text-sm font-semibold text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-code text-cyan-400"></i> MAVLINK SERIAL CONSOLE
+                    </h2>
+                    <button onclick="clearTerminal()" class="text-[10px] font-mono-tech text-slate-400 hover:text-cyan-400">CLEAR</button>
+                </div>
+                
+                <div id="terminal-output" class="flex-1 bg-slate-950 rounded-lg p-2.5 font-mono-tech text-[11px] text-cyan-400/90 overflow-y-auto max-h-48 border border-slate-800 space-y-1">
+                    <div>[00:00:01] SYS: Initializing Pixhawk 6X Autopilot...</div>
+                    <div>[00:00:02] GPS: Fix acquired - 14 satellites locked (HDOP 0.7).</div>
+                    <div>[00:00:03] BATT: 2S LiPo detected (8.40V max, 7.40V nominal).</div>
+                    <div>[00:00:04] SENS: IMU gyro and accelerometer calibration verified.</div>
+                    <div>[00:00:05] MISN: Uploaded 12 SAR waypoints successfully.</div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        // Mission State variables
+        let isArmed = false;
+        let flightMode = 'AUTO';
+        let missionSeconds = 0;
+        let batteryVoltage = 8.12; // 2S LiPo initial voltage
+        let currentDraw = 12.4;
+        let mahConsumed = 1420;
+        let pitch = -1.2;
+        let roll = 0.4;
+        let yaw = 142;
+        let altitude = 48.2;
+        let groundSpeed = 12.4;
+        let climbRate = 0.8;
+        let droneLat = 34.2145;
+        let droneLon = -118.4128;
+        let waypoints = [
+            {x: 60, y: 80}, {x: 120, y: 80}, {x: 120, y: 160}, {x: 60, y: 160}, {x: 60, y: 240}, {x: 120, y: 240}
+        ];
+        let mapLayer = 'sat';
+        let cameraMode = 'thermal';
+        let zoomLevel = 4.0;
+
+        // Timer increment
+        setInterval(() => {
+            missionSeconds++;
+            const hrs = String(Math.floor(missionSeconds / 3600)).padStart(2, '0');
+            const mins = String(Math.floor((missionSeconds % 3600) / 60)).padStart(2, '0');
+            const secs = String(missionSeconds % 60).padStart(2, '0');
+            document.getElementById('mission-timer').innerText = `T+ ${hrs}:${mins}:${secs}`;
+
+            // Slight simulated telemetry drift
+            if (isArmed) {
+                pitch += (Math.random() - 0.5) * 0.4;
+                roll += (Math.random() - 0.5) * 0.4;
+                yaw = (yaw + (Math.random() - 0.5) * 1) % 360;
+                altitude += (Math.random() - 0.5) * 0.5;
+                groundSpeed += (Math.random() - 0.5) * 0.2;
+                
+                // Discharge 2S LiPo battery gradually (Range 8.4V to 6.8V critical)
+                if (batteryVoltage > 6.9) {
+                    batteryVoltage -= 0.001;
+                    mahConsumed += 0.8;
+                }
+
+                // Update drone lat/lon slightly
+                droneLat += (Math.random() - 0.5) * 0.0001;
+                droneLon += (Math.random() - 0.5) * 0.0001;
+
+                updateUI();
+            }
+        }, 1000);
+
+        // UI Update function
+        function updateUI() {
+            document.getElementById('pitch-val').innerText = pitch.toFixed(1);
+            document.getElementById('roll-val').innerText = roll.toFixed(1);
+            document.getElementById('yaw-val').innerText = Math.round(yaw);
+            document.getElementById('alt-val').innerText = altitude.toFixed(1);
+            document.getElementById('gs-val').innerText = groundSpeed.toFixed(1);
+            document.getElementById('climb-val').innerText = (climbRate > 0 ? '+' : '') + climbRate.toFixed(1);
+            
+            document.getElementById('drone-lat').innerText = droneLat.toFixed(4);
+            document.getElementById('drone-lon').innerText = droneLon.toFixed(4);
+
+            document.getElementById('batt-voltage').innerText = batteryVoltage.toFixed(2);
+            document.getElementById('batt-current').innerText = currentDraw.toFixed(1);
+            document.getElementById('batt-mah').innerText = Math.round(mahConsumed);
+
+            // Calculate percentage for 2S LiPo (8.4V max, 6.8V empty)
+            let maxV = 8.4;
+            let minV = 6.8;
+            let percent = Math.max(0, Math.min(100, ((batteryVoltage - minV) / (maxV - minV)) * 100));
+            document.getElementById('batt-percent').innerText = Math.round(percent);
+            document.getElementById('batt-bar').style.width = percent + '%';
+
+            // Estimated flight time remaining
+            let remainingMin = Math.max(1, Math.round((percent / 100) * 16));
+            document.getElementById('batt-time').innerText = `${remainingMin}m ${(missionSeconds % 60)}s`;
+
+            // Battery warning status
+            if (batteryVoltage < 7.2) {
+                document.getElementById('batt-status-badge').innerText = 'LOW BATTERY!';
+                document.getElementById('batt-status-badge').className = 'text-xs font-mono-tech text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800/50 animate-pulse';
+                document.getElementById('batt-icon').className = 'fa-solid fa-battery-quarter text-rose-500 animate-bounce';
+            } else if (batteryVoltage < 7.5) {
+                document.getElementById('batt-status-badge').innerText = 'NOMINAL';
+                document.getElementById('batt-status-badge').className = 'text-xs font-mono-tech text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/50';
+                document.getElementById('batt-icon').className = 'fa-solid fa-battery-half text-amber-400';
+            }
+        }
+
+        // Arm / Disarm toggle
+        function toggleFlightMode() {
+            isArmed = !isArmed;
+            const btn = document.getElementById('arm-btn');
+            const txt = document.getElementById('arm-btn-text');
+            const dot = document.getElementById('connection-dot');
+            
+            if (isArmed) {
+                btn.className = 'px-4 py-1.5 rounded-lg bg-rose-600/20 border border-rose-500/60 hover:bg-rose-600/40 text-rose-300 font-mono-tech text-xs font-semibold tracking-wider transition-all flex items-center gap-1.5 glow-rose';
+                txt.innerText = 'ARMED (MOTORS LIVE)';
+                logTerminal('ARM: Motors armed successfully. Rotor spin-up initiated.');
+            } else {
+                btn.className = 'px-4 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/40 text-emerald-300 font-mono-tech text-xs font-semibold tracking-wider transition-all flex items-center gap-1.5';
+                txt.innerText = 'DISARMED';
+                logTerminal('DISARM: Motors disarmed and locked safely.');
+            }
+        }
+
+        // Emergency Return
+        function triggerEmergencyReturn() {
+            flightMode = 'RTH';
+            highlightFlightMode('LAND');
+            logTerminal('WARNING: Emergency Return-To-Home initiated by operator! Navigating to home GPS coordinate.');
+        }
+
+        // Flight mode selector
+        function setFlightMode(mode) {
+            flightMode = mode;
+            highlightFlightMode(mode);
+            logTerminal(`MODE: Autopilot switched to ${mode} mode.`);
+        }
+
+        function highlightFlightMode(mode) {
+            ['AUTO', 'LOITER', 'GUIDED', 'LAND'].forEach(m => {
+                const el = document.getElementById('mode-' + m.toLowerCase());
+                if (el) {
+                    if (m === mode) {
+                        el.className = 'p-2 rounded bg-cyan-950 border border-cyan-500/60 text-cyan-300 font-mono-tech text-xs font-bold transition-all';
+                    } else {
+                        el.className = 'p-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all';
+                    }
+                }
+            });
+        }
+
+        function setCameraMode(mode) {
+            cameraMode = mode;
+            if (mode === 'thermal') {
+                document.getElementById('cam-mode').innerText = 'THERMAL (FLIR)';
+                document.getElementById('cam-mode-thermal').className = 'py-1.5 px-2 rounded bg-cyan-950 border border-cyan-700/60 text-cyan-300 font-mono-tech text-xs transition-all';
+                document.getElementById('cam-mode-optical').className = 'py-1.5 px-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all';
+                document.getElementById('target-box').style.borderColor = 'rgba(244, 63, 94, 0.8)';
+            } else {
+                document.getElementById('cam-mode').innerText = 'OPTICAL 4K';
+                document.getElementById('cam-mode-optical').className = 'py-1.5 px-2 rounded bg-cyan-950 border border-cyan-700/60 text-cyan-300 font-mono-tech text-xs transition-all';
+                document.getElementById('cam-mode-thermal').className = 'py-1.5 px-2 rounded bg-slate-900 border border-slate-700 text-slate-400 font-mono-tech text-xs transition-all';
+                document.getElementById('target-box').style.borderColor = 'rgba(6, 182, 212, 0.8)';
+            }
+            logTerminal(`PAYLOAD: Camera switched to ${mode.toUpperCase()} mode.`);
+        }
+
+        function adjustZoom(delta) {
+            zoomLevel = Math.max(1.0, Math.min(16.0, zoomLevel + delta));
+            document.getElementById('cam-zoom').innerText = zoomLevel.toFixed(1) + 'X';
+        }
+
+        function dropPayloadBeacon() {
+            logTerminal('PAYLOAD: Emergency SAR rescue beacon deployed at current GPS coordinate.');
+        }
+
+        function setMapLayer(layer) {
+            mapLayer = layer;
+            if (layer === 'sat') {
+                document.getElementById('map-sat-btn').className = 'px-2 py-0.5 rounded text-[10px] font-mono-tech bg-cyan-950 text-cyan-300 border border-cyan-800';
+                document.getElementById('map-heat-btn').className = 'px-2 py-0.5 rounded text-[10px] font-mono-tech bg-slate-900 text-slate-400 border border-slate-700';
+            } else {
+                document.getElementById('map-heat-btn').className = 'px-2 py-0.5 rounded text-[10px] font-mono-tech bg-cyan-950 text-cyan-300 border border-cyan-800';
+                document.getElementById('map-sat-btn').className = 'px-2 py-0.5 rounded text-[10px] font-mono-tech bg-slate-900 text-slate-400 border border-slate-700';
+            }
+        }
+
+        function addSearchWaypoint() {
+            waypoints.push({x: Math.floor(Math.random() * 200) + 40, y: Math.floor(Math.random() * 150) + 40});
+            logTerminal(`MISN: Added waypoint #${waypoints.length} to search grid.`);
+        }
+
+        function clearWaypoints() {
+            waypoints = [];
+            logTerminal('MISN: Cleared all search grid waypoints.');
+        }
+
+        function updateTargetAlt(val) {
+            document.getElementById('target-alt-label').innerText = val + ' m';
+        }
+
+        function updateTargetSpeed(val) {
+            document.getElementById('target-speed-label').innerText = val + ' m/s';
+        }
+
+        function logTerminal(msg) {
+            const term = document.getElementById('terminal-output');
+            const timeStr = new Date().toTimeString().split(' ')[0];
+            const div = document.createElement('div');
+            div.innerText = `[${timeStr}] ${msg}`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminal-output').innerHTML = '';
+        }
+
+        // Canvas Rendering: Artificial Horizon
+        const horizonCanvas = document.getElementById('horizonCanvas');
+        const hCtx = horizonCanvas.getContext('2d');
+
+        function drawHorizon() {
+            horizonCanvas.width = horizonCanvas.parentElement.clientWidth;
+            horizonCanvas.height = horizonCanvas.parentElement.clientHeight;
+
+            const w = horizonCanvas.width;
+            const h = horizonCanvas.height;
+            const cx = w / 2;
+            const cy = h / 2;
+
+            hCtx.clearRect(0, 0, w, h);
+
+            hCtx.save();
+            hCtx.translate(cx, cy);
+            hCtx.rotate((-roll * Math.PI) / 180);
+
+            const pitchOffset = pitch * 4;
+
+            // Sky
+            hCtx.fillStyle = '#0369a1';
+            hCtx.fillRect(-w, -h * 2 + pitchOffset, w * 2, h * 2);
+
+            // Ground
+            hCtx.fillStyle = '#78350f';
+            hCtx.fillRect(-w, pitchOffset, w * 2, h * 2);
+
+            // Horizon line
+            hCtx.strokeStyle = '#ffffff';
+            hCtx.lineWidth = 2;
+            hCtx.beginPath();
+            hCtx.moveTo(-w, pitchOffset);
+            hCtx.lineTo(w, pitchOffset);
+            hCtx.stroke();
+
+            // Pitch ladder ticks
+            hCtx.fillStyle = '#ffffff';
+            hCtx.font = '10px Share Tech Mono';
+            for (let p = -30; p <= 30; p += 10) {
+                if (p === 0) continue;
+                let yTick = pitchOffset - (p * 4);
+                hCtx.fillRect(-20, yTick, 40, 1);
+                hCtx.fillText(`${p}°`, 25, yTick + 3);
+            }
+
+            hCtx.restore();
+            requestAnimationFrame(drawHorizon);
+        }
+        requestAnimationFrame(drawHorizon);
+
+        // Canvas Rendering: Tactical Map
+        const mapCanvas = document.getElementById('tacticalMap');
+        const mCtx = mapCanvas.getContext('2d');
+
+        function drawMap() {
+            mapCanvas.width = mapCanvas.parentElement.clientWidth;
+            mapCanvas.height = mapCanvas.parentElement.clientHeight;
+
+            const w = mapCanvas.width;
+            const h = mapCanvas.height;
+
+            mCtx.clearRect(0, 0, w, h);
+
+            // Background grid
+            mCtx.fillStyle = mapLayer === 'sat' ? '#020617' : '#090d16';
+            mCtx.fillRect(0, 0, w, h);
+
+            mCtx.strokeStyle = 'rgba(30, 41, 59, 0.6)';
+            mCtx.lineWidth = 1;
+            const gridSize = 30;
+            for (let x = 0; x < w; x += gridSize) {
+                mCtx.beginPath(); mCtx.moveTo(x, 0); mCtx.lineTo(x, h); mCtx.stroke();
+            }
+            for (let y = 0; y < h; y += gridSize) {
+                mCtx.beginPath(); mCtx.moveTo(0, y); mCtx.lineTo(w, y); mCtx.stroke();
+            }
+
+            // Draw Search Grid Waypoints & connecting path
+            if (waypoints.length > 0) {
+                mCtx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
+                mCtx.lineWidth = 2;
+                mCtx.setLineDash([4, 4]);
+                mCtx.beginPath();
+                mCtx.moveTo(waypoints[0].x, waypoints[0].y);
+                waypoints.forEach(wp => mCtx.lineTo(wp.x, wp.y));
+                mCtx.stroke();
+                mCtx.setLineDash([]);
+
+                waypoints.forEach((wp, idx) => {
+                    mCtx.fillStyle = '#06b6d4';
+                    mCtx.beginPath();
+                    mCtx.arc(wp.x, wp.y, 4, 0, Math.PI * 2);
+                    mCtx.fill();
+                    mCtx.fillStyle = '#94a3b8';
+                    mCtx.font = '9px Share Tech Mono';
+                    mCtx.fillText(`WP${idx+1}`, wp.x + 6, wp.y - 4);
+                });
+            }
+
+            // Draw Drone position in center of map
+            const droneX = w / 2 + Math.sin(missionSeconds * 0.2) * 20;
+            const droneY = h / 2 + Math.cos(missionSeconds * 0.15) * 15;
+
+            mCtx.save();
+            mCtx.translate(droneX, droneY);
+            mCtx.rotate((yaw * Math.PI) / 180);
+
+            // Drone icon triangle
+            mCtx.fillStyle = '#10b981';
+            mCtx.beginPath();
+            mCtx.moveTo(0, -10);
+            mCtx.lineTo(7, 8);
+            mCtx.lineTo(-7, 8);
+            mCtx.closePath();
+            mCtx.fill();
+
+            mCtx.restore();
+
+            requestAnimationFrame(drawMap);
+        }
+        requestAnimationFrame(drawMap);
+
+        // Telemetry Chart Setup with Chart.js
+        const chartCtx = document.getElementById('telemetryChart').getContext('2d');
+        const telemetryChart = new Chart(chartCtx, {
+            type: 'line',
+            data: {
+                labels: Array(15).fill(''),
+                datasets: [{
+                    label: 'Altitude (m)',
+                    data: [45, 46, 47, 46.5, 48, 48.2, 49, 48.5, 48.1, 47.9, 48.2, 48.3, 48.1, 48.2, 48.2],
+                    borderColor: '#06b6d4',
+                    backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0
+                }, {
+                    label: 'Voltage (V)',
+                    data: [8.3, 8.28, 8.25, 8.22, 8.2, 8.18, 8.16, 8.15, 8.14, 8.13, 8.12, 8.12, 8.12, 8.12, 8.12],
+                    borderColor: '#10b981',
+                    borderWidth: 1.5,
+                    borderDash: [3, 3],
+                    tension: 0.3,
+                    pointRadius: 0,
+                    yAxisID: 'y1'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                        ticks: { color: '#64748b', font: { size: 9, family: 'Share Tech Mono' } }
+                    },
+                    y1: {
+                        position: 'right',
+                        min: 6.8,
+                        max: 8.4,
+                        grid: { display: false },
+                        ticks: { color: '#10b981', font: { size: 9, family: 'Share Tech Mono' } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Periodic Chart Data Push
+        setInterval(() => {
+            if (isArmed) {
+                const altData = telemetryChart.data.datasets[0].data;
+                const voltData = telemetryChart.data.datasets[1].data;
+                altData.shift(); altData.push(parseFloat(altitude.toFixed(1)));
+                voltData.shift(); voltData.push(parseFloat(batteryVoltage.toFixed(2)));
+                telemetryChart.update('none');
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
